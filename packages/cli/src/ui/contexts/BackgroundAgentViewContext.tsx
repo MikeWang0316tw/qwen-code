@@ -15,6 +15,7 @@ import {
   createContext,
   useContext,
   useCallback,
+  useEffect,
   useMemo,
   useState,
 } from 'react';
@@ -37,6 +38,11 @@ export interface BackgroundAgentViewState {
   dialogMode: BackgroundDialogMode;
   /** Convenience boolean: `dialogMode !== 'closed'`. */
   dialogOpen: boolean;
+  /**
+   * True when the footer pill owns keyboard focus (highlighted, awaiting
+   * Enter to open the dialog). Mirrors the Arena tab-bar focus pattern.
+   */
+  pillFocused: boolean;
 }
 
 export interface BackgroundAgentViewActions {
@@ -49,6 +55,7 @@ export interface BackgroundAgentViewActions {
   exitDetail(): void;
   /** Cancel the currently selected entry (no-op if not running). */
   cancelSelected(): void;
+  setPillFocused(focused: boolean): void;
 }
 
 // ─── Context ────────────────────────────────────────────────
@@ -65,6 +72,7 @@ const DEFAULT_STATE: BackgroundAgentViewState = {
   selectedIndex: 0,
   dialogMode: 'closed',
   dialogOpen: false,
+  pillFocused: false,
 };
 
 const noop = () => {};
@@ -79,6 +87,7 @@ const DEFAULT_ACTIONS: BackgroundAgentViewActions = {
   enterDetail: noop,
   exitDetail: noop,
   cancelSelected: noop,
+  setPillFocused: noop,
 };
 
 // ─── Hooks ──────────────────────────────────────────────────
@@ -106,7 +115,16 @@ export function BackgroundAgentViewProvider({
 
   const [rawSelectedIndex, setRawSelectedIndex] = useState(0);
   const [dialogMode, setDialogMode] = useState<BackgroundDialogMode>('closed');
+  const [pillFocused, setPillFocused] = useState(false);
   const dialogOpen = dialogMode !== 'closed';
+  const hasRunning = entries.some((e) => e.status === 'running');
+
+  // Drop stale pill focus as soon as the pill loses its reason to exist —
+  // without this, InputPrompt's input-blocking branch would stay on after
+  // the last running agent finishes.
+  useEffect(() => {
+    if (pillFocused && !hasRunning) setPillFocused(false);
+  }, [pillFocused, hasRunning]);
 
   // Single clamp on read — `rawSelectedIndex` can fall out of range when
   // entries shrink between renders.
@@ -138,6 +156,8 @@ export function BackgroundAgentViewProvider({
 
   const openDialog = useCallback(() => {
     setDialogMode('list');
+    // Opening the dialog supersedes pill focus — the dialog now owns input.
+    setPillFocused(false);
   }, []);
 
   const closeDialog = useCallback(() => {
@@ -171,8 +191,9 @@ export function BackgroundAgentViewProvider({
       selectedIndex,
       dialogMode,
       dialogOpen,
+      pillFocused,
     }),
-    [entries, selectedIndex, dialogMode, dialogOpen],
+    [entries, selectedIndex, dialogMode, dialogOpen, pillFocused],
   );
 
   const actions: BackgroundAgentViewActions = useMemo(
@@ -185,6 +206,7 @@ export function BackgroundAgentViewProvider({
       enterDetail,
       exitDetail,
       cancelSelected,
+      setPillFocused,
     }),
     [
       setSelectedIndex,
@@ -195,6 +217,7 @@ export function BackgroundAgentViewProvider({
       enterDetail,
       exitDetail,
       cancelSelected,
+      setPillFocused,
     ],
   );
 

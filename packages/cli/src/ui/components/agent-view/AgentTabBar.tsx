@@ -70,7 +70,7 @@ export const AgentTabBar: React.FC = () => {
     setAgentTabBarFocused,
   } = useAgentViewActions();
   const { entries: bgEntries } = useBackgroundAgentViewState();
-  const { openDialog: openBgDialog } = useBackgroundAgentViewActions();
+  const { setPillFocused: setBgPillFocused } = useBackgroundAgentViewActions();
   const { embeddedShellFocused } = useUIState();
   const hasBgAgents = bgEntries.length > 0;
 
@@ -86,15 +86,14 @@ export const AgentTabBar: React.FC = () => {
       } else if (key.name === 'up') {
         setAgentTabBarFocused(false);
       } else if (key.name === 'down') {
-        // Down cascades to the Background tasks dialog if any background
-        // agents exist. Switch to main first — DialogManager only mounts
-        // in the main-view branch of DefaultAppLayout, so opening the
-        // dialog while an agent tab is active would leave the user in a
-        // hidden-modal state.
+        // Down cascades to the Background tasks pill if any background
+        // agents exist. Switch to main first — the footer pill only
+        // renders under the main view, so focusing it from an agent tab
+        // would strand focus on an offscreen surface.
         if (hasBgAgents) {
           setAgentTabBarFocused(false);
           switchToMain();
-          openBgDialog();
+          setBgPillFocused(true);
         }
       } else if (
         key.sequence &&

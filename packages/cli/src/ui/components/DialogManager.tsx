@@ -392,7 +392,12 @@ export const DialogManager = ({
   // AppContainer) so its visibility mutes the composer and the global
   // Ctrl+C / Esc handlers route through `closeAnyOpenDialog`.
   if (bgTasksDialogOpen) {
-    return <BackgroundTasksDialog />;
+    return (
+      <BackgroundTasksDialog
+        availableTerminalHeight={terminalHeight - staticExtraHeight}
+        terminalWidth={mainAreaWidth}
+      />
+    );
   }
 
   return null;

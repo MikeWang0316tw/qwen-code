@@ -11,13 +11,14 @@
  */
 
 import type React from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Box, Text } from 'ink';
 import {
   useBackgroundAgentViewState,
   useBackgroundAgentViewActions,
 } from '../../contexts/BackgroundAgentViewContext.js';
 import { useKeypress } from '../../hooks/useKeypress.js';
+import { MaxSizedBox } from '../shared/MaxSizedBox.js';
 import { theme } from '../../semantic-colors.js';
 import { useConfig } from '../../contexts/ConfigContext.js';
 import {
@@ -109,7 +110,11 @@ const ListBody: React.FC<{
 
 // ─── Detail mode ───────────────────────────────────────────
 
-const DetailBody: React.FC<{ entry: BackgroundAgentEntry }> = ({ entry }) => {
+const DetailBody: React.FC<{
+  entry: BackgroundAgentEntry;
+  maxHeight: number;
+  maxWidth: number;
+}> = ({ entry, maxHeight, maxWidth }) => {
   const title = `${entry.subagentType ?? 'Agent'} \u203A ${rowLabel(entry)}`;
 
   const subtitleParts: string[] = [];
@@ -132,59 +137,88 @@ const DetailBody: React.FC<{ entry: BackgroundAgentEntry }> = ({ entry }) => {
     );
   }
 
-  const activities = entry.recentActivities ?? [];
+  const activities = (entry.recentActivities ?? []).slice().reverse();
+  const hasError = entry.status === 'failed' && Boolean(entry.error);
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <Text bold color={theme.text.accent}>
-        {title}
-      </Text>
-      <Text color={theme.text.secondary}>{subtitleParts.join(' \u00B7 ')}</Text>
+    <MaxSizedBox
+      maxHeight={maxHeight}
+      maxWidth={maxWidth}
+      overflowDirection="bottom"
+    >
+      <Box>
+        <Text bold color={theme.text.accent}>
+          {title}
+        </Text>
+      </Box>
+      <Box>
+        <Text color={theme.text.secondary}>
+          {subtitleParts.join(' \u00B7 ')}
+        </Text>
+      </Box>
 
       {activities.length > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold>Progress</Text>
-          {activities
-            .slice()
-            .reverse()
-            .map((a, i) => (
-              <Text key={`${a.at}-${i}`}>
-                <Text color={theme.text.secondary}>
-                  {i === 0 ? '\u203A ' : '  '}
-                </Text>
-                <Text>{a.name}</Text>
-                {a.description ? (
-                  <Text color={theme.text.secondary}> {a.description}</Text>
-                ) : null}
+        <Fragment>
+          <Box />
+          <Box>
+            <Text bold>Progress</Text>
+          </Box>
+          {activities.map((a, i) => (
+            <Box key={`${a.at}-${i}`}>
+              <Text color={theme.text.secondary}>
+                {i === 0 ? '\u203A ' : '  '}
               </Text>
-            ))}
-        </Box>
+              <Text>{a.name}</Text>
+              {a.description ? (
+                <Text color={theme.text.secondary}> {a.description}</Text>
+              ) : null}
+            </Box>
+          ))}
+        </Fragment>
       )}
 
       {entry.prompt && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold>Prompt</Text>
-          <Text wrap="wrap">{entry.prompt}</Text>
-        </Box>
+        <Fragment>
+          <Box />
+          <Box>
+            <Text bold>Prompt</Text>
+          </Box>
+          <Box>
+            <Text wrap="wrap">{entry.prompt}</Text>
+          </Box>
+        </Fragment>
       )}
 
-      {entry.status === 'failed' && entry.error && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold color={theme.status.error}>
-            Error
-          </Text>
-          <Text color={theme.status.error} wrap="wrap">
-            {entry.error}
-          </Text>
-        </Box>
+      {hasError && (
+        <Fragment>
+          <Box />
+          <Box>
+            <Text bold color={theme.status.error}>
+              Error
+            </Text>
+          </Box>
+          <Box>
+            <Text color={theme.status.error} wrap="wrap">
+              {entry.error}
+            </Text>
+          </Box>
+        </Fragment>
       )}
-    </Box>
+    </MaxSizedBox>
   );
 };
 
 // ─── Dialog shell ──────────────────────────────────────────
 
-export const BackgroundTasksDialog: React.FC = () => {
+interface BackgroundTasksDialogProps {
+  availableTerminalHeight: number;
+  terminalWidth: number;
+}
+
+export const BackgroundTasksDialog: React.FC<BackgroundTasksDialogProps> = ({
+  availableTerminalHeight,
+  terminalWidth,
+}) => {
   const { entries, selectedIndex, dialogOpen, dialogMode } =
     useBackgroundAgentViewState();
   const {
@@ -196,6 +230,17 @@ export const BackgroundTasksDialog: React.FC = () => {
     cancelSelected,
   } = useBackgroundAgentViewActions();
   const config = useConfig();
+
+  // Detail view is capped at ~50% of the available area. Chrome (border,
+  // title line, two marginTops, hint line) eats 6 rows; MaxSizedBox
+  // handles row-level truncation for the rest.
+  const detailMaxHeight = Math.max(
+    6,
+    Math.floor(availableTerminalHeight * 0.5),
+  );
+  const detailContentHeight = Math.max(2, detailMaxHeight - 6);
+  // Rounded border + paddingX=1 on the outer Box ≈ 4 horizontal cells.
+  const detailContentWidth = Math.max(10, terminalWidth - 4);
 
   const selectedEntry = useMemo(
     () => entries[selectedIndex] ?? null,
@@ -300,7 +345,11 @@ export const BackgroundTasksDialog: React.FC = () => {
         {dialogMode === 'list' ? (
           <ListBody entries={entries} selectedIndex={selectedIndex} />
         ) : selectedEntry ? (
-          <DetailBody entry={selectedEntry} />
+          <DetailBody
+            entry={selectedEntry}
+            maxHeight={detailContentHeight}
+            maxWidth={detailContentWidth}
+          />
         ) : (
           <Box paddingX={1}>
             <Text color={theme.text.secondary}>No entry to show.</Text>
