@@ -189,8 +189,23 @@ const DetailBody: React.FC<{
 
   // Registry stores activities newest-last; render newest-first so that
   // MaxSizedBox's bottom overflow truncates stale rows, not the live one.
-  const activities = (entry.recentActivities ?? []).slice().reverse();
+  // Cap at 5 in case the registry ever raises its buffer.
+  const activities = (entry.recentActivities ?? [])
+    .slice()
+    .reverse()
+    .slice(0, 5);
   const hasError = entry.status === 'failed' && Boolean(entry.error);
+
+  // Prompt: show at most 5 newline-delimited segments, each row truncated
+  // to one visual line. Append an ellipsis if the source had more.
+  const promptLines = entry.prompt ? entry.prompt.split('\n') : [];
+  const visiblePromptLines = promptLines.slice(0, 5);
+  const promptTruncated = promptLines.length > visiblePromptLines.length;
+  if (promptTruncated && visiblePromptLines.length > 0) {
+    const lastIdx = visiblePromptLines.length - 1;
+    visiblePromptLines[lastIdx] =
+      `${visiblePromptLines[lastIdx].trimEnd()}\u2026`;
+  }
 
   return (
     <MaxSizedBox
@@ -225,7 +240,10 @@ const DetailBody: React.FC<{
             const descSuffix = a.description ? ` ${a.description}` : '';
             return (
               <Box key={`${a.at}-${i}`}>
-                <Text dimColor={!isFirst} wrap="truncate-end">
+                <Text
+                  color={isFirst ? theme.text.primary : theme.text.secondary}
+                  wrap="truncate-end"
+                >
                   {isFirst ? '\u276F ' : '  '}
                   {a.name}
                   {descSuffix}
@@ -236,7 +254,7 @@ const DetailBody: React.FC<{
         </Fragment>
       )}
 
-      {entry.prompt && (
+      {visiblePromptLines.length > 0 && (
         <Fragment>
           <Box />
           <Box>
@@ -244,9 +262,11 @@ const DetailBody: React.FC<{
               Prompt
             </Text>
           </Box>
-          <Box>
-            <Text wrap="wrap">{entry.prompt}</Text>
-          </Box>
+          {visiblePromptLines.map((line, i) => (
+            <Box key={`prompt-${i}`}>
+              <Text wrap="truncate-end">{line || ' '}</Text>
+            </Box>
+          ))}
         </Fragment>
       )}
 
@@ -292,14 +312,12 @@ export const BackgroundTasksDialog: React.FC<BackgroundTasksDialogProps> = ({
   } = useBackgroundAgentViewActions();
   const config = useConfig();
 
-  // Detail view is capped at ~50% of the available area. Chrome (border,
-  // title line, two marginTops, hint line) eats 6 rows; MaxSizedBox
-  // handles row-level truncation for the rest.
-  const detailMaxHeight = Math.max(
-    6,
-    Math.floor(availableTerminalHeight * 0.5),
-  );
-  const detailContentHeight = Math.max(2, detailMaxHeight - 6);
+  // Progress and Prompt are each self-capped at 5 rows inside DetailBody,
+  // so the body never grows unbounded. Use all available height (minus the
+  // dialog chrome) as the MaxSizedBox budget so nothing gets clipped just
+  // because the terminal is short. Chrome = border(2) + title(1) + two
+  // marginTops(2) + hint(1) = 6 rows.
+  const detailContentHeight = Math.max(10, availableTerminalHeight - 6);
   // Rounded border + paddingX=1 on the outer Box ≈ 4 horizontal cells.
   const detailContentWidth = Math.max(10, terminalWidth - 4);
 
@@ -330,6 +348,22 @@ export const BackgroundTasksDialog: React.FC<BackgroundTasksDialogProps> = ({
     registry.setActivityChangeCallback(onActivity);
     return () => registry.setActivityChangeCallback(undefined);
   }, [dialogOpen, dialogMode, config, selectedAgentId]);
+
+  // Wall-clock tick for the running agent's duration. Activity callbacks
+  // fire when tools run, but duration needs to advance even when the agent
+  // is quietly thinking — otherwise the "33s" line freezes between tool uses.
+  const selectedStatus = selectedEntry?.status;
+  useEffect(() => {
+    if (
+      !dialogOpen ||
+      dialogMode !== 'detail' ||
+      !selectedAgentId ||
+      selectedStatus !== 'running'
+    )
+      return;
+    const id = setInterval(() => bumpActivity((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [dialogOpen, dialogMode, selectedAgentId, selectedStatus]);
 
   useKeypress(
     (key) => {
@@ -406,12 +440,14 @@ export const BackgroundTasksDialog: React.FC<BackgroundTasksDialogProps> = ({
       marginTop={1}
       paddingX={1}
     >
-      <Box paddingX={1}>
-        <Text bold color={theme.text.accent}>
-          Background tasks
-        </Text>
-      </Box>
-      <Box marginTop={1}>
+      {dialogMode === 'list' && (
+        <Box paddingX={1}>
+          <Text bold color={theme.text.accent}>
+            Background tasks
+          </Text>
+        </Box>
+      )}
+      <Box marginTop={dialogMode === 'list' ? 1 : 0}>
         {dialogMode === 'list' ? (
           <ListBody
             entries={entries}
