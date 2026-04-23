@@ -26,6 +26,17 @@ export interface UseBackgroundAgentViewResult {
   entries: readonly BackgroundAgentEntry[];
 }
 
+// The registry keeps terminal entries for the whole session so the model
+// can still read their transcripts and the notification path stays deduped.
+// The dialog only surfaces live work, so filter terminal statuses out here
+// — otherwise "0 active agents" in the header would disagree with
+// "Local agents (N)" in the list once anything finishes.
+function selectLiveEntries(
+  all: readonly BackgroundAgentEntry[],
+): BackgroundAgentEntry[] {
+  return all.filter((e) => e.status === 'running');
+}
+
 export function useBackgroundAgentView(
   config: Config | null,
 ): UseBackgroundAgentViewResult {
@@ -37,10 +48,10 @@ export function useBackgroundAgentView(
 
     // getAll() returns entries in registration order, which is startTime
     // order — no sort needed.
-    setEntries(registry.getAll());
+    setEntries(selectLiveEntries(registry.getAll()));
 
     const onStatusChange = () => {
-      setEntries(registry.getAll());
+      setEntries(selectLiveEntries(registry.getAll()));
     };
 
     registry.setStatusChangeCallback(onStatusChange);

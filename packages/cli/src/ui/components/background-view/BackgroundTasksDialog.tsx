@@ -11,8 +11,9 @@
  */
 
 import type React from 'react';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text } from 'ink';
+import stringWidth from 'string-width';
 import {
   useBackgroundAgentViewState,
   useBackgroundAgentViewActions,
@@ -90,9 +91,36 @@ function rowLabel(entry: BackgroundAgentEntry): string {
 }
 
 function elapsedFor(entry: BackgroundAgentEntry): string {
-  return formatDuration(
-    Math.max(0, (entry.endTime ?? Date.now()) - entry.startTime),
+  const elapsedMs = Math.max(
+    0,
+    (entry.endTime ?? Date.now()) - entry.startTime,
   );
+  // Round down to whole seconds — the detail subtitle is a glanceable
+  // indicator, not a stopwatch, and sub-second precision flickers distract
+  // from the actual status change.
+  const wholeSeconds = Math.floor(elapsedMs / 1000);
+  return formatDuration(wholeSeconds * 1000, { hideTrailingZeros: true });
+}
+
+// Manually truncate to an exact cell width so each row lines up with the
+// others regardless of content length. Relying on Ink's `wrap="truncate-end"`
+// inside MaxSizedBox produced inconsistent row widths when some rows fit and
+// others needed ellipsis, breaking the left-column alignment of the prefix.
+function truncateToWidth(text: string, maxWidth: number): string {
+  if (maxWidth <= 0) return '';
+  if (stringWidth(text) <= maxWidth) return text;
+  const ellipsis = '…';
+  const ellipsisWidth = stringWidth(ellipsis);
+  const target = Math.max(0, maxWidth - ellipsisWidth);
+  let width = 0;
+  let result = '';
+  for (const char of text) {
+    const charWidth = stringWidth(char);
+    if (width + charWidth > target) break;
+    width += charWidth;
+    result += char;
+  }
+  return result + ellipsis;
 }
 
 // ─── List mode ─────────────────────────────────────────────
@@ -102,15 +130,22 @@ const ListBody: React.FC<{
   selectedIndex: number;
   maxRows: number;
 }> = ({ entries, selectedIndex, maxRows }) => {
+  // Keep the "Local agents (N)" section header rendered even when the list
+  // is empty, so the overlay doesn't collapse into a single line of
+  // empty-state text when the last agent finishes while the dialog is open.
   if (entries.length === 0) {
     return (
-      <Box paddingX={1}>
-        <Text color={theme.text.secondary}>No tasks currently running</Text>
+      <Box flexDirection="column">
+        <Box paddingX={1}>
+          <Text bold>Local agents</Text>
+          <Text color={theme.text.secondary}> (0)</Text>
+        </Box>
+        <Box paddingX={1}>
+          <Text color={theme.text.secondary}>No tasks currently running</Text>
+        </Box>
       </Box>
     );
   }
-
-  const running = entries.filter((e) => e.status === 'running').length;
 
   // Window entries around selectedIndex. When the list fits, show
   // everything; otherwise centre the selection and clamp to the ends.
@@ -137,19 +172,14 @@ const ListBody: React.FC<{
   return (
     <Box flexDirection="column">
       <Box paddingX={1}>
-        <Text color={theme.text.secondary}>
-          {running} active {running === 1 ? 'agent' : 'agents'}
-        </Text>
+        <Text bold>Local agents</Text>
+        <Text color={theme.text.secondary}> ({entries.length})</Text>
       </Box>
-      <Box flexDirection="column" marginTop={1}>
-        <Box paddingX={1}>
-          <Text bold>Local agents</Text>
-          <Text color={theme.text.secondary}> ({entries.length})</Text>
-        </Box>
+      <Box flexDirection="column">
         {hiddenAbove > 0 && (
           <Box paddingX={1}>
             <Text color={theme.text.secondary}>
-              {`  \u2191 ${hiddenAbove} more above`}
+              {`  ^ ${hiddenAbove} more above`}
             </Text>
           </Box>
         )}
@@ -165,7 +195,7 @@ const ListBody: React.FC<{
           return (
             <Box key={entry.agentId} flexDirection="row" paddingX={1}>
               <Text color={isSelected ? theme.text.accent : undefined}>
-                {isSelected ? '\u276F ' : '  '}
+                {isSelected ? '> ' : '  '}
               </Text>
               <Text color={labelColor}>{rowLabel(entry)}</Text>
             </Box>
@@ -174,7 +204,7 @@ const ListBody: React.FC<{
         {hiddenBelow > 0 && (
           <Box paddingX={1}>
             <Text color={theme.text.secondary}>
-              {`  \u2193 ${hiddenBelow} more below`}
+              {`  v ${hiddenBelow} more below`}
             </Text>
           </Box>
         )}
@@ -255,18 +285,21 @@ const DetailBody: React.FC<{
           {activities.map((a, i) => {
             const isLast = i === activities.length - 1;
             // ASCII `>` is unambiguously one cell wide in every terminal
-            // font, so `>  ` (3 cells) aligns exactly with the history
-            // indent of three spaces. Unicode chevrons rendered with
-            // inconsistent width broke alignment in some fonts.
-            const prefix = isLast ? '>  ' : '   ';
+            // font, so `> ` (2 cells) aligns with a two-space indent on the
+            // other rows. Unicode chevrons rendered with inconsistent width
+            // broke alignment in some fonts.
+            const prefix = isLast ? '> ' : '  ';
+            const label = truncateToWidth(
+              formatActivityLabel(a.name, a.description),
+              Math.max(0, maxWidth - stringWidth(prefix)),
+            );
             return (
               <Box key={`${a.at}-${i}`}>
                 <Text
                   color={isLast ? theme.text.primary : theme.text.secondary}
-                  wrap="truncate-end"
                 >
                   {prefix}
-                  {formatActivityLabel(a.name, a.description)}
+                  {label}
                 </Text>
               </Box>
             );
@@ -384,6 +417,50 @@ export const BackgroundTasksDialog: React.FC<BackgroundTasksDialogProps> = ({
     const id = setInterval(() => bumpActivity((n) => n + 1), 1000);
     return () => clearInterval(id);
   }, [dialogOpen, dialogMode, selectedAgentId, selectedStatus]);
+
+  // Auto-fallback to the list view when the selected agent reaches a
+  // terminal state while the user is watching the detail view. We only
+  // exit on the running → terminal *transition* — if the user deliberately
+  // opened an already-completed entry, they stay on it.
+  const initialDetailStatusRef = useRef<{
+    agentId: string;
+    status: BackgroundAgentEntry['status'];
+  } | null>(null);
+  useEffect(() => {
+    if (!dialogOpen || dialogMode !== 'detail') {
+      initialDetailStatusRef.current = null;
+      return;
+    }
+    // The viewed entry disappeared out from under us — most commonly because
+    // the user pressed `x` and the live-entries filter dropped it once the
+    // registry flipped its status to terminal. Without this fallback the
+    // dialog would sit in detail mode with a stranded "No entry to show"
+    // screen.
+    if (!selectedAgentId) {
+      initialDetailStatusRef.current = null;
+      exitDetail();
+      return;
+    }
+    const seen = initialDetailStatusRef.current;
+    if (!seen || seen.agentId !== selectedAgentId) {
+      // First render in detail mode for this entry — remember the status we
+      // opened with so we can detect a transition away from 'running' later.
+      if (selectedStatus) {
+        initialDetailStatusRef.current = {
+          agentId: selectedAgentId,
+          status: selectedStatus,
+        };
+      }
+      return;
+    }
+    if (
+      seen.status === 'running' &&
+      selectedStatus &&
+      selectedStatus !== 'running'
+    ) {
+      exitDetail();
+    }
+  }, [dialogOpen, dialogMode, selectedAgentId, selectedStatus, exitDetail]);
 
   useKeypress(
     (key) => {

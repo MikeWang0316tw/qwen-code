@@ -1128,14 +1128,37 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
         // terminates (success, failure, or cancel) to avoid holding the
         // event emitter after the agent is gone.
         const bgEmitter = bgSubagent.getCore().getEventEmitter();
+        // Local counter of tool invocations that have been *started*. The
+        // core's executionStats.totalToolCalls only increments when a tool
+        // result arrives, so using it as the live toolUses number leaves the
+        // subtitle one behind the Progress list while a tool is in flight.
+        // Tracking TOOL_CALL ourselves keeps the subtitle in sync with the
+        // rows the user actually sees.
+        let liveToolCallCount = 0;
+        const refreshLiveStats = () => {
+          const entry = registry.get(hookOpts.agentId);
+          if (!entry || entry.status !== 'running') return;
+          const summary = bgSubagent.getExecutionSummary();
+          entry.stats = {
+            totalTokens: summary.totalTokens,
+            toolUses: liveToolCallCount,
+            durationMs: summary.totalDurationMs,
+          };
+        };
         const onToolCall = (event: AgentToolCallEvent) => {
+          liveToolCallCount += 1;
+          refreshLiveStats();
           registry.appendActivity(hookOpts.agentId, {
             name: event.name,
             description: event.description,
             at: event.timestamp,
           });
         };
+        const onUsageMetadata = () => {
+          refreshLiveStats();
+        };
         bgEmitter.on(AgentEventType.TOOL_CALL, onToolCall);
+        bgEmitter.on(AgentEventType.USAGE_METADATA, onUsageMetadata);
 
         // Wire external message drain so SendMessage can inject messages
         // into this agent's reasoning loop between tool rounds.
@@ -1147,7 +1170,7 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           const summary = bgSubagent.getExecutionSummary();
           return {
             totalTokens: summary.totalTokens,
-            toolUses: summary.totalToolCalls,
+            toolUses: liveToolCallCount,
             durationMs: summary.totalDurationMs,
           };
         };
@@ -1213,6 +1236,7 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
             }
           } finally {
             bgEmitter.off(AgentEventType.TOOL_CALL, onToolCall);
+            bgEmitter.off(AgentEventType.USAGE_METADATA, onUsageMetadata);
             cleanupJsonl?.();
           }
         };
