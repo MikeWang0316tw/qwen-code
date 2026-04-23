@@ -34,6 +34,39 @@ const STATUS_VERBS: Record<BackgroundAgentEntry['status'], string> = {
   cancelled: 'Stopped',
 };
 
+interface StatusPresentation {
+  icon: string;
+  color: string;
+  labelColor: string;
+}
+
+function terminalStatusPresentation(
+  status: BackgroundAgentEntry['status'],
+): StatusPresentation | null {
+  switch (status) {
+    case 'completed':
+      return {
+        icon: '\u2714',
+        color: theme.status.success,
+        labelColor: theme.text.secondary,
+      };
+    case 'failed':
+      return {
+        icon: '\u2716',
+        color: theme.status.error,
+        labelColor: theme.status.errorDim,
+      };
+    case 'cancelled':
+      return {
+        icon: '\u2716',
+        color: theme.status.warning,
+        labelColor: theme.status.warningDim,
+      };
+    default:
+      return null;
+  }
+}
+
 function rowLabel(entry: BackgroundAgentEntry): string {
   return buildBackgroundEntryLabel(entry, { includePrefix: false });
 }
@@ -105,11 +138,12 @@ const ListBody: React.FC<{
         {visible.map((entry, visibleIdx) => {
           const idx = windowStart + visibleIdx;
           const isSelected = idx === selectedIndex;
+          const terminal = terminalStatusPresentation(entry.status);
           const labelColor = isSelected
             ? theme.text.accent
-            : entry.status === 'running'
-              ? theme.text.primary
-              : theme.text.secondary;
+            : terminal
+              ? terminal.labelColor
+              : theme.text.primary;
           return (
             <Box key={entry.agentId} flexDirection="row" paddingX={1}>
               <Text color={isSelected ? theme.text.accent : undefined}>
@@ -140,16 +174,15 @@ const DetailBody: React.FC<{
 }> = ({ entry, maxHeight, maxWidth }) => {
   const title = `${entry.subagentType ?? 'Agent'} \u203A ${rowLabel(entry)}`;
 
-  const subtitleParts: string[] = [];
-  if (entry.status !== 'running') {
-    subtitleParts.push(STATUS_VERBS[entry.status]);
-  }
-  subtitleParts.push(elapsedFor(entry));
+  const terminal = terminalStatusPresentation(entry.status);
+  const dimSubtitleParts: string[] = [elapsedFor(entry)];
   if (entry.stats?.totalTokens) {
-    subtitleParts.push(`${formatTokenCount(entry.stats.totalTokens)} tokens`);
+    dimSubtitleParts.push(
+      `${formatTokenCount(entry.stats.totalTokens)} tokens`,
+    );
   }
   if (entry.stats?.toolUses !== undefined) {
-    subtitleParts.push(
+    dimSubtitleParts.push(
       `${entry.stats.toolUses} tool${entry.stats.toolUses === 1 ? '' : 's'}`,
     );
   }
@@ -169,8 +202,13 @@ const DetailBody: React.FC<{
         <Text>{title}</Text>
       </Box>
       <Box>
+        {terminal && (
+          <Text color={terminal.color}>
+            {`${terminal.icon} ${STATUS_VERBS[entry.status]} \u00B7 `}
+          </Text>
+        )}
         <Text color={theme.text.secondary}>
-          {subtitleParts.join(' \u00B7 ')}
+          {dimSubtitleParts.join(' \u00B7 ')}
         </Text>
       </Box>
 
