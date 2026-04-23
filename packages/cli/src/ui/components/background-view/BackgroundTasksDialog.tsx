@@ -23,8 +23,26 @@ import { theme } from '../../semantic-colors.js';
 import { useConfig } from '../../contexts/ConfigContext.js';
 import {
   buildBackgroundEntryLabel,
+  ToolDisplayNames,
+  ToolNames,
   type BackgroundAgentEntry,
 } from '@qwen-code/qwen-code-core';
+
+// Tool-name → display-name lookup (`run_shell_command` → `Shell`).
+const TOOL_DISPLAY_BY_NAME: Record<string, string> = Object.fromEntries(
+  (Object.keys(ToolNames) as Array<keyof typeof ToolNames>).map((key) => [
+    ToolNames[key],
+    ToolDisplayNames[key],
+  ]),
+);
+
+function formatActivityLabel(name: string, description: string | undefined) {
+  const display = TOOL_DISPLAY_BY_NAME[name] ?? name;
+  const singleLineDesc = description
+    ? description.replace(/\s*\n\s*/g, ' ').trim()
+    : '';
+  return singleLineDesc ? `${display}(${singleLineDesc})` : display;
+}
 import { formatDuration, formatTokenCount } from '../../utils/formatters.js';
 
 const STATUS_VERBS: Record<BackgroundAgentEntry['status'], string> = {
@@ -187,13 +205,10 @@ const DetailBody: React.FC<{
     );
   }
 
-  // Registry stores activities newest-last; render newest-first so that
-  // MaxSizedBox's bottom overflow truncates stale rows, not the live one.
-  // Cap at 5 in case the registry ever raises its buffer.
-  const activities = (entry.recentActivities ?? [])
-    .slice()
-    .reverse()
-    .slice(0, 5);
+  // Registry stores activities newest-last; keep that order so the live
+  // row sits at the bottom of the Progress block. Cap at 5 in case the
+  // registry ever raises its buffer.
+  const activities = (entry.recentActivities ?? []).slice(-5);
   const hasError = entry.status === 'failed' && Boolean(entry.error);
 
   // Prompt: show at most 5 newline-delimited segments, each row truncated
@@ -238,22 +253,20 @@ const DetailBody: React.FC<{
             </Text>
           </Box>
           {activities.map((a, i) => {
-            const isFirst = i === 0;
-            const descSuffix = a.description ? ` ${a.description}` : '';
-            // `\u203A` is a single-cell glyph in all terminals; the heavier
-            // `\u276F` can render as 2 cells in some fonts, which collapses
-            // the trailing separator space and misaligns rows against the
-            // two-space history indent.
-            const prefix = isFirst ? '\u203A  ' : '   ';
+            const isLast = i === activities.length - 1;
+            // ASCII `>` is unambiguously one cell wide in every terminal
+            // font, so `>  ` (3 cells) aligns exactly with the history
+            // indent of three spaces. Unicode chevrons rendered with
+            // inconsistent width broke alignment in some fonts.
+            const prefix = isLast ? '>  ' : '   ';
             return (
               <Box key={`${a.at}-${i}`}>
                 <Text
-                  color={isFirst ? theme.text.primary : theme.text.secondary}
+                  color={isLast ? theme.text.primary : theme.text.secondary}
                   wrap="truncate-end"
                 >
                   {prefix}
-                  {a.name}
-                  {descSuffix}
+                  {formatActivityLabel(a.name, a.description)}
                 </Text>
               </Box>
             );
