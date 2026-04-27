@@ -12,12 +12,14 @@ import type {
 } from '../contentGenerator.js';
 import type { OpenAICompatibleProvider } from './provider/index.js';
 import type { StreamingToolCallParser } from './streamingToolCallParser.js';
+import type { XmlToolCallParser } from './xmlToolCallParser.js';
 
 export interface RequestContext {
   model: string;
   modalities: InputModalities;
   startTime: number;
   toolCallParser?: StreamingToolCallParser;
+  xmlToolCallParser?: XmlToolCallParser;
 }
 
 export interface ErrorHandler {

@@ -942,10 +942,17 @@ export function convertOpenAIChunkToGemini(
       parts.push({ text: reasoningText, thought: true });
     }
 
-    // Handle text content
+    // Handle text content — strip any <tool_call> blocks and route them
+    // through the XML parser when the model outputs text-embedded tool calls.
     if (choice.delta?.content) {
       if (typeof choice.delta.content === 'string') {
-        parts.push({ text: choice.delta.content });
+        const xmlParser = requestContext.xmlToolCallParser;
+        const displayText = xmlParser
+          ? xmlParser.processChunk(choice.delta.content)
+          : choice.delta.content;
+        if (displayText) {
+          parts.push({ text: displayText });
+        }
       }
     }
 
@@ -996,6 +1003,19 @@ export function convertOpenAIChunkToGemini(
             },
           });
         }
+      }
+
+      // Emit tool calls parsed from text-embedded <tool_call> blocks.
+      const xmlToolCalls =
+        requestContext.xmlToolCallParser?.getCompletedToolCalls() ?? [];
+      for (const xmlCall of xmlToolCalls) {
+        parts.push({
+          functionCall: {
+            id: xmlCall.id,
+            name: xmlCall.name,
+            args: xmlCall.args,
+          },
+        });
       }
     }
 
